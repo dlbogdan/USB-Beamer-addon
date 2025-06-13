@@ -8,12 +8,12 @@ usb: true
 kernel_modules: true
 host_network: true
 apparmor: false
-version: 1.4.0
+version: 1.4.18
 description: >
   USB Beamer Addon that allows you to use remote USB devices on your Hassio system.
-  After starting the addon, a public key will be generated and displayed below.
-  Copy this public key from here to the web GUI of the server(s) you want to access USB devices from.
-init: true
+  On first start, a key pair is generated. Go to the 'Log' tab to find the public key.
+  Copy the public key from the log and paste it into the web UI of your USB Beamer server(s).
+init: false
 full_access: true
 arch:
 - aarch64
@@ -29,7 +29,7 @@ privileged:
   - SYS_NICE
 devices:
   - /dev/mem
-schema:
-  public_key: str
-options:
-  public_key: ""
+schema: {}
+options: {}
+uart: true
+udev: true

@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/hassio-addons/base:16.1.0
+ARG BUILD_FROM=ghcr.io/hassio-addons/base:latest
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH=amd64
@@ -9,12 +9,16 @@ RUN apk add --no-cache \
     device-mapper-libs \
     grep \
     openssh-client \
-    python3
+    python3 \
+    py3-zeroconf \
+    usbip-utils \
+    usbutils
 
 # Copy root filesystem
 COPY rootfs /
 
 RUN chmod +x /etc/cont-init.d/01-keygen.sh \
+    && chmod +x /etc/cont-init.d/02-load-modules.sh \
     && chmod +x /etc/services.d/beamer-client/run
 
 # Build arguments

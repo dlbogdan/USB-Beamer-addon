@@ -1,4 +1,14 @@
-#!/bin/bash
+#!/command/with-contenv bashio
+# ==============================================================================
+# S6-Overlay run script for the USB Beamer Client service.
+# ==============================================================================
 
-echo "Starting USB Beamer Client service..."
-python3 /beamer_client/main.py 
+set -e
+
+# Get the log level from the HA Supervisor and make it uppercase (e.g., "info" -> "INFO").
+# This allows the user to control verbosity from the addon's configuration page.
+log_level=$(bashio::string.upper "$(bashio::log.level)")
+bashio::log.info "Starting USB Beamer Client service with log level: ${log_level}"
+
+# Execute the main python application, passing the configured log level.
+exec python3 /beamer_client/main.py --log-level "${log_level}" 
