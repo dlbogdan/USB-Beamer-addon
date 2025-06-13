@@ -1,0 +1,4 @@
+#!/bin/bash
+
+echo "Starting USB Beamer Client service..."
+python3 /beamer_client/main.py 

@@ -7,10 +7,15 @@ RUN apk add --no-cache \
     linux-tools-usbip \
     hwdata-usb \
     device-mapper-libs \
-    grep
+    grep \
+    openssh-client \
+    python3
 
 # Copy root filesystem
 COPY rootfs /
+
+RUN chmod +x /etc/cont-init.d/01-keygen.sh \
+    && chmod +x /etc/services.d/beamer-client/run
 
 # Build arguments
 ARG BUILD_ARCH

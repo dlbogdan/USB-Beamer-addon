@@ -1,0 +1,41 @@
+Overall Architecture: USB/IP over SSH for Home Assistant
+System Overview
+This is a system to connect USB devices to Home Assistant using SSH and USB/IP, running on Docker containers for both the server and client.
+
+Server Component
+Type: Docker container
+Role: Hosts the SSH server and USB/IP daemon
+Functionality:
+Runs an SSH server to create a secure tunnel
+Runs a USB/IP daemon to export USB devices from the host
+Detects when SSH reconnects occur and rebinds USB devices
+Notifies the client when a reconnect happens
+Broadcasts its presence on the network via avahi.
+Dependencies: Needs openssh-server and usbip
+Has a web interface that allows the users to paste in the public keys from the clients so that they can tunnel in and connect to usbipd
+The web interface also allows the users to pick the usb devices to export (saved state, automatically reattach the same ones on subsequent runs)
+Network: ssh and avahi
+Client Component
+Type: Home Assistant addon (Docker container)
+Role: Manages the connection and attaches devices to Home Assistant
+Functionality:
+Initially self generates keypair, and shows the public key in the Configuration TAB UI in home assistant addons interface
+Sets up an SSH tunnel to the server
+Checks if the server is alive using a heartbeat
+Automatically attaches all USB devices exported by the server
+Attaches devices dynamically, with retries if it fails
+Responds to server reconnect notifications
+Dependencies: Needs openssh-client and usbip-utils
+Network: Uses a local tunnel on port 3240 (or whatever the port used by usbpip is)
+Integration: Makes USB devices available to Home Assistant
+Interaction
+Connection: Uses an SSH tunnel to carry USB/IP traffic
+Detection: The client monitors the server’s liveness, while the server detects reconnects
+Updates: The client updates device attachments as needed, and the server rebinds devices on reconnect
+Requirements
+Performance: Must detect if the server is down or reconnects within 3-5 seconds
+Robustness: Should handle VM restarts, plug-and-play device changes, and network issues
+Security: Ensures encrypted SSH communication, key-based authentication, and firewalled ports
+Environment
+Server: Runs on a Linux host with Docker installed
+Client: Runs on HAOS with Docker support
