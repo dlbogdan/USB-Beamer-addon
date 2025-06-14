@@ -22,28 +22,27 @@ class BeamerClient:
     async def start(self):
         """Starts the client's main discovery loop and waits for shutdown."""
         logging.info("Starting USB Beamer Client...")
-        # The SSHManager's __init__ already starts discovery.
-        # The main task is just to wait for a shutdown signal.
+        await self.ssh_manager.start()
         logging.info("Service discovery is active. Client is running.")
         await self.shutdown_event.wait()
 
-    def stop(self):
+    async def stop(self):
         """Stops the client and all its managers."""
         logging.info("Stopping USB Beamer Client...")
-        self.ssh_manager.close()
+        await self.ssh_manager.close()
         self.shutdown_event.set()
         logging.info("Client shutdown initiated.")
 
 async def main():
     client = BeamerClient()
 
-    def handle_shutdown_signal():
+    async def handle_shutdown_signal():
         logging.info("Shutdown signal received.")
-        client.stop()
+        await client.stop()
 
     loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGTERM, handle_shutdown_signal)
-    loop.add_signal_handler(signal.SIGINT, handle_shutdown_signal)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(handle_shutdown_signal()))
 
     try:
         await client.start()

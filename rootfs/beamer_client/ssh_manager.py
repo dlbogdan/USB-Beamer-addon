@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from zeroconf import ServiceInfo
+from zeroconf.asyncio import AsyncServiceInfo
 
 from discovery_manager import DiscoveryManager
 from usb_manager import USBManager
@@ -28,7 +28,11 @@ class SSHManager:
             remove_callback=self.remove_server
         )
 
-    async def add_server(self, info: ServiceInfo):
+    async def start(self):
+        """Starts the discovery manager."""
+        await self.discovery.start()
+
+    async def add_server(self, info: AsyncServiceInfo):
         """Starts a new SSH tunnel for a discovered server."""
         name = info.name
         if name in self.servers:
@@ -62,7 +66,33 @@ class SSHManager:
         """Returns a mapping of server names to their local ports."""
         return self.port_mapping.copy()
 
-    async def _maintain_tunnel(self, info: ServiceInfo, local_port: int):
+    async def _is_tunnel_alive(self, local_port: int) -> bool:
+        """Checks if the tunnel is alive by trying to connect to the local port."""
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", local_port),
+                timeout=3.0
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except (ConnectionRefusedError, asyncio.TimeoutError):
+            return False
+        except Exception as e:
+            logging.debug(f"Tunnel check for port {local_port} failed with unexpected error: {e}")
+            return False
+
+    async def _monitor_tunnel_health(self, name: str, local_port: int, process):
+        """Monitors the tunnel's health and terminates the process if it fails."""
+        while process.returncode is None:
+            await asyncio.sleep(10)  # Health check interval
+            if not await self._is_tunnel_alive(local_port):
+                logging.warning(f"[{name}] Tunnel health check failed. Terminating connection.")
+                if process.returncode is None:
+                    process.terminate()
+                break
+
+    async def _maintain_tunnel(self, info: AsyncServiceInfo, local_port: int):
         """Creates and maintains a single SSH tunnel, reconnecting on failure."""
         address = info.server
         ssh_port = info.port
@@ -70,6 +100,7 @@ class SSHManager:
         logging.info(f"Starting tunnel for {self.user}@{address}:{ssh_port} ({info.name})")
         
         sync_task = None
+        health_check_task = None
         while True:
             process = None
             try:
@@ -87,11 +118,29 @@ class SSHManager:
                 ]
                 process = await asyncio.create_subprocess_exec(*cmd)
                 logging.info(f"[{info.name}] SSH tunnel process started on local port {local_port}.")
-                
-                # Start a periodic task to sync devices for this tunnel.
-                sync_task = asyncio.create_task(self._periodic_sync(info.name, local_port))
 
-                # Wait for the SSH process to terminate.
+                # Wait for the tunnel to become responsive.
+                tunnel_ready = False
+                for i in range(15):  # Try for up to 15 seconds
+                    if await self._is_tunnel_alive(local_port):
+                        logging.info(f"[{info.name}] Tunnel is now responsive.")
+                        tunnel_ready = True
+                        break
+                    await asyncio.sleep(1)
+
+                if not tunnel_ready:
+                    logging.warning(f"[{info.name}] Tunnel did not become responsive in time.")
+                    if process.returncode is None:
+                        process.terminate()
+                    continue  # This will trigger the reconnect logic after a delay
+
+                # Start periodic tasks for device sync and health monitoring.
+                sync_task = asyncio.create_task(self._periodic_sync(info.name, local_port))
+                health_check_task = asyncio.create_task(
+                    self._monitor_tunnel_health(info.name, local_port, process)
+                )
+
+                # Wait for the SSH process to terminate or for the health check to fail.
                 await process.wait()
 
             except asyncio.CancelledError:
@@ -105,6 +154,8 @@ class SSHManager:
             finally:
                 if sync_task:
                     sync_task.cancel()
+                if health_check_task:
+                    health_check_task.cancel()
 
             # If the loop continues, it means the connection was lost. Detach devices.
             logging.warning(f"Tunnel for {info.name} disconnected. Detaching devices before reconnecting...")
@@ -125,9 +176,9 @@ class SSHManager:
                 # Wait longer after an error to avoid spamming logs.
                 await asyncio.sleep(30)
 
-    def close(self):
+    async def close(self):
         """Closes all active SSH tunnels and discovery."""
         logging.info("Closing all SSH tunnels and discovery service...")
-        self.discovery.close()
+        await self.discovery.close()
         for tunnel in self.tunnels.values():
             tunnel.cancel() 
