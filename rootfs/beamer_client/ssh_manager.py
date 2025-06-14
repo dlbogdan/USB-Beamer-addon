@@ -10,6 +10,8 @@ PRIVATE_KEY_PATH = "/data/id_rsa"
 STARTING_LOCAL_PORT = 13240
 SSH_USER = "root"
 USBIP_REMOTE_PORT = 3240
+REMOTE_HTTP_PORT = 5000  # The port the server's web UI is on.
+LOCAL_HTTP_PORT_OFFSET = 1000 # Offset to calculate local port for HTTP forwarding.
 
 class SSHManager:
     """Manages dynamic SSH tunnels to discovered servers."""
@@ -19,7 +21,8 @@ class SSHManager:
         self.usb_manager = usb_manager
         self.tunnels = {}  # Maps server name to the tunnel task
         self.servers = {}  # Maps server name to the ServiceInfo object
-        self.port_mapping = {}  # Maps server name to its assigned local port
+        self.port_mapping = {}  # Maps server name to its assigned local usbip port
+        self.http_port_mapping = {} # Maps server name to its assigned local http port
         self.next_local_port = STARTING_LOCAL_PORT
         
         logging.info(f"SSH connections will use hardcoded username: '{self.user}'")
@@ -40,11 +43,13 @@ class SSHManager:
 
         local_port = self.next_local_port
         self.next_local_port += 1
+        local_http_port = local_port + LOCAL_HTTP_PORT_OFFSET
 
         self.servers[name] = info
         self.port_mapping[name] = local_port
+        self.http_port_mapping[name] = local_http_port
         
-        task = asyncio.create_task(self._maintain_tunnel(info, local_port))
+        task = asyncio.create_task(self._maintain_tunnel(info, local_port, local_http_port))
         self.tunnels[name] = task
 
     async def remove_server(self, name: str):
@@ -61,6 +66,8 @@ class SSHManager:
             del self.servers[name]
         if name in self.port_mapping:
             del self.port_mapping[name]
+        if name in self.http_port_mapping:
+            del self.http_port_mapping[name]
 
     def get_active_ports(self) -> dict:
         """Returns a mapping of server names to their local ports."""
@@ -92,7 +99,7 @@ class SSHManager:
                     process.terminate()
                 break
 
-    async def _maintain_tunnel(self, info: AsyncServiceInfo, local_port: int):
+    async def _maintain_tunnel(self, info: AsyncServiceInfo, local_port: int, local_http_port: int):
         """Creates and maintains a single SSH tunnel, reconnecting on failure."""
         address = info.server
         ssh_port = info.port
@@ -109,6 +116,7 @@ class SSHManager:
                     "-p", str(ssh_port),
                     "-i", PRIVATE_KEY_PATH,
                     "-L", f"{local_port}:localhost:{USBIP_REMOTE_PORT}",
+                    "-L", f"{local_http_port}:localhost:{REMOTE_HTTP_PORT}",
                     f"{self.user}@{address}",
                     "-N",
                     "-o", "StrictHostKeyChecking=no",
@@ -135,7 +143,7 @@ class SSHManager:
                     continue  # This will trigger the reconnect logic after a delay
 
                 # Start periodic tasks for device sync and health monitoring.
-                sync_task = asyncio.create_task(self._periodic_sync(info.name, local_port))
+                sync_task = asyncio.create_task(self._periodic_sync(info.name, local_port, local_http_port))
                 health_check_task = asyncio.create_task(
                     self._monitor_tunnel_health(info.name, local_port, process)
                 )
@@ -162,11 +170,11 @@ class SSHManager:
             await self.usb_manager.detach_all_for_server(info.name)
             await asyncio.sleep(10)
 
-    async def _periodic_sync(self, server_name: str, local_port: int):
+    async def _periodic_sync(self, server_name: str, local_port: int, local_http_port: int):
         """The background task that periodically calls the USBManager to sync devices."""
         while True:
             try:
-                await self.usb_manager.scan_and_sync_devices(server_name, local_port)
+                await self.usb_manager.scan_and_sync_devices(server_name, local_port, local_http_port)
                 await asyncio.sleep(15)  # Sync interval
             except asyncio.CancelledError:
                 logging.info(f"[{server_name}] Device sync loop stopped.")

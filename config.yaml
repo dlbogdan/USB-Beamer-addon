@@ -8,7 +8,7 @@ usb: true
 kernel_modules: true
 host_network: true
 apparmor: false
-version: 1.4.21
+version: 1.4.25
 description: >
   USB Beamer Addon that allows you to use remote USB devices on your Hassio system.
   On first start, a key pair is generated. Go to the 'Log' tab to find the public key.

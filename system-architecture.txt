@@ -21,19 +21,19 @@ Role: Manages the connection and attaches devices to Home Assistant
 Functionality:
 Initially self generates keypair, and shows the public key in the Configuration TAB UI in home assistant addons interface
 Sets up an SSH tunnel to the server
-Checks if the server is alive using a heartbeat
+Actively monitors the SSH tunnel's health by probing the tunnel port, ensuring it's responsive before attaching devices.
+Proactively checks tunnel liveness every 10 seconds and triggers a fast reconnect if it fails.
 Automatically attaches all USB devices exported by the server
 Attaches devices dynamically, with retries if it fails
-Responds to server reconnect notifications
 Dependencies: Needs openssh-client and usbip-utils
 Network: Uses a local tunnel on port 3240 (or whatever the port used by usbpip is)
 Integration: Makes USB devices available to Home Assistant
 Interaction
 Connection: Uses an SSH tunnel to carry USB/IP traffic
-Detection: The client monitors the server’s liveness, while the server detects reconnects
+Detection: The client now uses a robust, two-stage health check. It first ensures the tunnel is established and responsive, then continuously monitors it for liveness to enable rapid reconnection if the connection is lost.
 Updates: The client updates device attachments as needed, and the server rebinds devices on reconnect
 Requirements
-Performance: Must detect if the server is down or reconnects within 3-5 seconds
+Performance: Must detect if the server is down or reconnects within 15 seconds
 Robustness: Should handle VM restarts, plug-and-play device changes, and network issues
 Security: Ensures encrypted SSH communication, key-based authentication, and firewalled ports
 Environment

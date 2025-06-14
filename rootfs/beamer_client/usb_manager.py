@@ -2,6 +2,8 @@ import asyncio
 import logging
 import re
 import subprocess
+import aiohttp
+import json
 
 class USBManager:
     """Manages attaching and detaching USB/IP devices through active SSH tunnels."""
@@ -9,6 +11,25 @@ class USBManager:
     def __init__(self):
         # Maps a server name (e.g., 'beamer-server') to a SET of its attached bus IDs
         self.attached_devices_by_server = {}
+
+    async def _get_desired_busids(self, server_name: str, local_http_port: int) -> set | None:
+        """Gets the desired set of bus IDs from the server's configuration API."""
+        url = f"http://127.0.0.1:{local_http_port}/api/exported-devices"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return set(data)
+                    else:
+                        logging.warning(
+                            f"[{server_name}] Failed to get desired devices from API. "
+                            f"Status: {response.status}"
+                        )
+                        return None
+        except Exception as e:
+            logging.error(f"[{server_name}] Error connecting to device configuration API: {e}")
+            return None
 
     async def _get_remote_busids(self, server_name: str, local_port: int) -> set | None:
         """Lists devices from a server and returns a set of bus IDs, or None on error."""
@@ -79,37 +100,42 @@ class USBManager:
         except Exception as e:
             logging.error(f"An unexpected error occurred during detach: {e}")
 
-    async def scan_and_sync_devices(self, server_name: str, local_port: int):
+    async def scan_and_sync_devices(self, server_name: str, local_port: int, local_http_port: int):
         """The main periodic function to keep client state in sync with the server."""
-        # This is the main source of log spam, so it runs at DEBUG level.
         logging.debug(f"[{server_name}] Running device sync...")
         
-        remote_busids = await self._get_remote_busids(server_name, local_port)
-        if remote_busids is None:
-            logging.warning(f"[{server_name}] Could not get remote device list. Will retry.")
+        # Get the "desired state" from the server's API, which is the source of truth.
+        desired_busids = await self._get_desired_busids(server_name, local_http_port)
+        if desired_busids is None:
+            logging.warning(f"[{server_name}] Could not get desired device list from server API. Skipping sync.")
             return
 
         currently_attached = self.attached_devices_by_server.get(server_name, set())
-
-        # If the remote list is empty, but we know devices are attached,
-        # assume they are in use and do nothing. This prevents the attach/detach loop.
-        if not remote_busids and currently_attached:
-            logging.debug(f"[{server_name}] Server's exportable list is empty, but we have attached devices. Assuming they are in use, no action will be taken.")
-            return
+        logging.debug(f"[{server_name}] Sync state: Desired={desired_busids}, Local={currently_attached}")
         
-        to_attach = remote_busids - currently_attached
-        to_detach = currently_attached - remote_busids
-
+        # Detach devices that are attached locally but no longer desired by the server.
+        to_detach = currently_attached - desired_busids
         if to_detach:
-            logging.info(f"[{server_name}] Server stopped exporting devices: {to_detach}. Detaching...")
+            logging.info(f"[{server_name}] Server configuration changed. Detaching devices: {to_detach}")
             await self._detach_busids(to_detach)
             self.attached_devices_by_server[server_name] -= to_detach
 
-        if to_attach:
-            logging.info(f"[{server_name}] Server started exporting new devices: {to_attach}. Attaching...")
-            for busid in to_attach:
-                if await self._attach_busid(local_port, busid):
-                    self.attached_devices_by_server.setdefault(server_name, set()).add(busid)
+        # Identify devices that are desired but not yet attached.
+        to_attach_candidates = desired_busids - currently_attached
+        if to_attach_candidates:
+            # Check which of the desired devices are actually available for connection right now.
+            available_busids = await self._get_remote_busids(server_name, local_port)
+            if available_busids is None:
+                logging.warning(f"[{server_name}] Could not get available device list. Will retry attach on next sync.")
+                return
+            
+            # Attach devices that are both desired and available.
+            to_attach = to_attach_candidates.intersection(available_busids)
+            if to_attach:
+                logging.info(f"[{server_name}] Attaching newly configured devices: {to_attach}")
+                for busid in to_attach:
+                    if await self._attach_busid(local_port, busid):
+                        self.attached_devices_by_server.setdefault(server_name, set()).add(busid)
 
     async def detach_all_for_server(self, server_name: str):
         """Forcefully detaches all known devices for a given server."""

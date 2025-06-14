@@ -11,6 +11,7 @@ RUN apk add --no-cache \
     openssh-client \
     python3 \
     py3-zeroconf \
+    py3-aiohttp \
     usbip-utils \
     usbutils
 
